@@ -1,0 +1,27 @@
+# Python related
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Environments
+.env
+.venv
+env/
+venv/
+
+# Editor/IDE related
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS related
+.DS_Store
+Thumbs.db
+
+# Home Assistant specific (if you link your config folder)
+*.log
+*.db
+.storage/
