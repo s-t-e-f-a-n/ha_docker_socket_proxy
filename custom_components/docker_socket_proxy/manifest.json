@@ -7,5 +7,6 @@
   "iot_class": "local_polling",
   "requirements": [],
   "documentation": "https://github.com/s-t-e-f-a-n/ha-docker-socket-proxy",
+  "issue_tracker": "https://github.com/s-t-e-f-a-n/ha-docker-socket-proxy/issues",
   "codeowners": ["@s-t-e-f-a-n"]
 }
