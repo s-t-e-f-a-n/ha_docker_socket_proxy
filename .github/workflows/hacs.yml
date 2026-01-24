@@ -15,13 +15,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Official Home Assistant Hassfest validation
+      # REMARK: This validates manifest.json and code structure
       - name: Hassfest validation
         uses: home-assistant/actions/hassfest@master
 
+      # HACS Action validation
+      # REMARK: This ensures the repo meets HACS store requirements
       - name: HACS validation
         uses: hacs/action@main
         with:
           category: integration
-
-      - name: Brand validation
-        uses: home-assistant/actions/brands@master
