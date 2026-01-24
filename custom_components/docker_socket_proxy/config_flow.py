@@ -23,9 +23,11 @@ from homeassistant.core import callback
 from .const import (
     CONF_GRACE_PERIOD_ENABLED,
     CONF_GRACE_PERIOD_SECONDS,
+    CONF_SCAN_INTERVAL,
     DEFAULT_GRACE_PERIOD_ENABLED,
     DEFAULT_GRACE_PERIOD_SECONDS,
     DEFAULT_NAME,
+    DEFAULT_SCAN_INTERVAL,
     DEFAULT_URL,
     DOMAIN,
 )
@@ -77,7 +79,9 @@ class DockerProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except (aiohttp.ClientError, TimeoutError):
                 errors["base"] = "cannot_connect"
             except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception during Docker Proxy validation")
+                _LOGGER.exception(
+                    "Unexpected exception during Docker Socket Proxy validation"
+                )
                 errors["base"] = "unknown"
 
         return self.async_show_form(
@@ -88,14 +92,11 @@ class DockerProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> DockerOptionsFlowHandler:
         """Get the options flow for this handler."""
-        # Entferne das config_entry Argument hier:
         return DockerOptionsFlowHandler()
 
 
 class DockerOptionsFlowHandler(OptionsFlow):
     """Handle Docker Socket Proxy options."""
-
-    # Wir benötigen kein __init__, da die Basisklasse alles regelt.
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -104,20 +105,30 @@ class DockerOptionsFlowHandler(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        # Die Property self.config_entry ist automatisch verfügbar
         options = self.config_entry.options
-
-        enabled = options.get(CONF_GRACE_PERIOD_ENABLED, DEFAULT_GRACE_PERIOD_ENABLED)
-        seconds = options.get(CONF_GRACE_PERIOD_SECONDS, DEFAULT_GRACE_PERIOD_SECONDS)
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_GRACE_PERIOD_ENABLED, default=enabled): bool,
-                    vol.Required(CONF_GRACE_PERIOD_SECONDS, default=seconds): vol.All(
-                        vol.Coerce(int), vol.Range(min=0)
-                    ),
+                    # Scan Interval
+                    vol.Required(
+                        CONF_SCAN_INTERVAL,
+                        default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
+                    # Grace Period Settings
+                    vol.Required(
+                        CONF_GRACE_PERIOD_ENABLED,
+                        default=options.get(
+                            CONF_GRACE_PERIOD_ENABLED, DEFAULT_GRACE_PERIOD_ENABLED
+                        ),
+                    ): bool,
+                    vol.Required(
+                        CONF_GRACE_PERIOD_SECONDS,
+                        default=options.get(
+                            CONF_GRACE_PERIOD_SECONDS, DEFAULT_GRACE_PERIOD_SECONDS
+                        ),
+                    ): vol.All(vol.Coerce(int), vol.Range(min=0)),
                 }
             ),
         )

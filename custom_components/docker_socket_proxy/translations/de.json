@@ -23,8 +23,9 @@
     "step": {
       "init": {
         "title": "Docker Optionen",
-        "description": "Bereinigung und Aufbewahrungsfrist konfigurieren",
+        "description": "Abfrageintervall und Bereinigung mit Aufbewahrungsfrist konfigurieren",
         "data": {
+          "scan_interval": "Abfrageintervall (Sekunden) für das Aktualisieren von Containerzuständen",
           "grace_period_enabled": "Schonfrist für entfernte Container aktivieren",
           "grace_period_seconds": "Schonfrist (Sekunden) bis zur endgültigen Löschung"
         }

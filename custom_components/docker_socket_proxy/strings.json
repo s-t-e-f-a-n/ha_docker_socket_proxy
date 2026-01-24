@@ -23,8 +23,9 @@
     "step": {
       "init": {
         "title": "Docker Options",
-        "description": "Configure entity cleanup and retention",
+        "description": "Configure scan interval and entity cleanup with retention",
         "data": {
+          "scan_interval": "Scan Interval (seconds) for updating container states",
           "grace_period_enabled": "Enable Grace Period for orphaned containers",
           "grace_period_seconds": "Grace Period (seconds) before removal"
         }

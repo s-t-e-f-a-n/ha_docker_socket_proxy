@@ -14,17 +14,16 @@ DOMAIN: Final = "docker_socket_proxy"
 # Defaults
 DEFAULT_NAME: Final = "Docker Host"
 DEFAULT_URL: Final = "http://192.168.1.100:2375"
-DEFAULT_SCAN_INTERVAL: Final = 30
+DEFAULT_SCAN_INTERVAL: Final = 30               # in seconds
+DEFAULT_GRACE_PERIOD_SECONDS: Final = 604800    # 7 days in seconds
+DEFAULT_GRACE_PERIOD_ENABLED: Final = True
 
-# Coordinator Keys
+# User Configuration Keys
+CONF_GRACE_PERIOD_ENABLED: Final = "grace_period_enabled"
+CONF_GRACE_PERIOD_SECONDS: Final = "grace_period_seconds"
+CONF_SCAN_INTERVAL: Final = "scan_interval"
+
+# Coordinator Keys from Docker API
 ATTR_CONTAINERS: Final = "containers"
 ATTR_VERSION: Final = "version"
 ATTR_DOCKER_HOSTNAME: Final = "docker_hostname"
-
-# Grace Period Configuration
-CONF_GRACE_PERIOD_ENABLED: Final = "grace_period_enabled"
-CONF_GRACE_PERIOD_SECONDS: Final = "grace_period_seconds"
-
-# Default: 1 week (604800 seconds)
-DEFAULT_GRACE_PERIOD_SECONDS: Final = 604800
-DEFAULT_GRACE_PERIOD_ENABLED: Final = True

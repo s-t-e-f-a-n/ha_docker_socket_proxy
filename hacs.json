@@ -1,5 +1,11 @@
 {
-  "name": "HA Docker Socket Proxy",
+  "name": "Docker Socket Proxy",
   "render_readme": true,
+  "category": "integration",
+  "content_in_root": false,
+  "zip_release": false,
+  "filename": "docker_socket_proxy",
+  "domains": ["docker_socket_proxy"],
+  "country": [],
   "homeassistant": "2024.1.0"
 }

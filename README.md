@@ -3,15 +3,15 @@
 ![HA Docker Socket Proxy Logo](assets/logo.png)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![Version](https://img.shields.io/github/v/release/s-t-e-f-a-n/ha_docker_socket_proxy)
 ![License](https://img.shields.io/github/license/s-t-e-f-a-n/ha_docker_socket_proxy)
+![Version](https://img.shields.io/github/v/release/s-t-e-f-a-n/ha_docker_socket_proxy?style=flat-square)
+[![HACS Validation](https://github.com/s-t-e-f-a-n/ha_docker_socket_proxy/actions/workflows/hacs.yml/badge.svg)](https://github.com/s-t-e-f-a-n/ha_docker_socket_proxy/actions/workflows/hacs.yml)
 
-
-A Home Assistant integration that monitors Docker containers through a Docker socket proxy, providing real-time status, health checks, and service URLs for your containerized applications.
+A Home Assistant integration that monitors Docker containers through a Docker socket proxy ([Tecnativa's docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy)), providing real-time status, health checks, and service URLs for your containerized applications.
 
 ## Features
 
-- **Real-time Monitoring**: Polls Docker API every 30 seconds for live container data
+- **Real-time Monitoring**: Polls Docker Socket Proxy API every 30 seconds (configurable) for live container data
 - **Auto-Discovery**: Automatically creates sensors for new containers as they're deployed
 - **Health Checks**: Parses Docker health status from container status strings
 - **Service URLs**: Generates web URLs from `ha.web_port` container labels
@@ -48,6 +48,19 @@ A Home Assistant integration that monitors Docker containers through a Docker so
    - **Instance Name**: A friendly name for this Docker host (e.g., "NAS", "Server")
    - **Proxy URL**: The URL of your Docker socket proxy (e.g., `http://192.168.1.100:2375`)
 
+### Configuration & Options
+
+The integration can be fine-tuned after the initial setup. Go to **Settings** → **Devices & Services** → **Docker Socket Proxy** and click on **Configure**.
+
+| Option | Description | Default |
+| :--- | :--- | :--- |
+| **Scan Interval** | How often (in seconds) the integration polls the Docker API. | `30` |
+| **Enable Grace Period** | If enabled, sensors for stopped containers are not removed immediately. | `true` |
+| **Grace Period** | The time (in seconds) to wait before an orphaned sensor is removed. | `604800` (1 week) |
+
+> [!TIP]
+> Changes to the **Scan Interval** are applied immediately without requiring a restart of Home Assistant.
+
 ### Docker Socket Proxy Setup
 
 This integration requires a Docker socket proxy for security. You can use [Tecnativa's docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy):
@@ -66,14 +79,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped
+    healthcheck:
+      test: wget --spider http://localhost:2375/version || exit 1
+      interval: "29s"
+      timeout: "5s"
+      retries: 3
+      start_period: "21s"
 ```
-
-### Options
-
-After setup, you can configure:
-
-- **Enable Grace Period**: Whether to automatically remove sensors for stopped containers
-- **Grace Period (seconds)**: How long to wait before removing orphaned sensors (default: 1 week)
 
 ## Usage
 
@@ -203,10 +215,10 @@ cards:
         modify: "x && x.Networks ? Object.values(x.Networks)[0]?.IPAddress || '-' : '-'"
       - name: MAC Address
         data: network_settings
-        modify: "x && x.Networks ? Object.values(x.Networks)[0]?.MacAddress || '-' : '-'""
+        modify: "x && x.Networks ? Object.values(x.Networks)[0]?.MacAddress || '-' : '-'"
       - name: Network
         data: network_settings
-        modify: "x && x.Networks ? Object.values(x.Networks)[0]?.NetworkType || '-' : '-'""
+        modify: "x && x.Networks ? Object.values(x.Networks)[0]?.NetworkType || '-' : '-'"
       - name: Ports (Ext:Int)
         data: port_mappings
         modify: "x && x.length > 0 ? x.join('<br>') : '-'"
