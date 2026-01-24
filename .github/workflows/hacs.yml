@@ -1,24 +1,27 @@
-name: HACS Action
+name: Validation
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   schedule:
     - cron: "0 0 * * *"
 
 jobs:
-  hacs:
-    name: HACS Validation
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: HACS Action
+      - name: Hassfest validation
+        uses: home-assistant/actions/hassfest@master
+
+      - name: HACS validation
         uses: hacs/action@main
         with:
           category: integration
+
+      - name: Brand validation
+        uses: home-assistant/actions/brands@master
