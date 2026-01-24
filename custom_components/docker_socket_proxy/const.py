@@ -19,9 +19,9 @@ DEFAULT_GRACE_PERIOD_SECONDS: Final = 604800    # 7 days in seconds
 DEFAULT_GRACE_PERIOD_ENABLED: Final = True
 
 # User Configuration Keys
+CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_GRACE_PERIOD_ENABLED: Final = "grace_period_enabled"
 CONF_GRACE_PERIOD_SECONDS: Final = "grace_period_seconds"
-CONF_SCAN_INTERVAL: Final = "scan_interval"
 
 # Coordinator Keys from Docker API
 ATTR_CONTAINERS: Final = "containers"

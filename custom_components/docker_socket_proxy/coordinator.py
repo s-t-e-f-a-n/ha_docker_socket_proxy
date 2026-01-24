@@ -28,7 +28,11 @@ from .const import (
     ATTR_CONTAINERS,
     ATTR_DOCKER_HOSTNAME,
     ATTR_VERSION,
+    CONF_GRACE_PERIOD_ENABLED,
+    CONF_GRACE_PERIOD_SECONDS,
     CONF_SCAN_INTERVAL,
+    DEFAULT_GRACE_PERIOD_ENABLED,
+    DEFAULT_GRACE_PERIOD_SECONDS,
     DEFAULT_SCAN_INTERVAL,
 )
 
@@ -46,6 +50,15 @@ class DockerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         scan_interval = entry.options.get(
             CONF_SCAN_INTERVAL,
             entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
+        )
+
+        self.grace_period_enabled = entry.options.get(
+            CONF_GRACE_PERIOD_ENABLED,
+            entry.data.get(CONF_GRACE_PERIOD_ENABLED, DEFAULT_GRACE_PERIOD_ENABLED),
+        )
+        self.grace_period_seconds = entry.options.get(
+            CONF_GRACE_PERIOD_SECONDS,
+            entry.data.get(CONF_GRACE_PERIOD_SECONDS, DEFAULT_GRACE_PERIOD_SECONDS),
         )
 
         super().__init__(
