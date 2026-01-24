@@ -3,8 +3,8 @@
 ![HA Docker Socket Proxy Logo](assets/logo.png)
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
-![Version](https://img.shields.io/github/v/release/s-t-e-f-a-n/ha-docker-socket-proxy)
-![License](https://img.shields.io/github/license/s-t-e-f-a-n/ha-docker-socket-proxy)
+![Version](https://img.shields.io/github/v/release/s-t-e-f-a-n/ha_docker_socket_proxy)
+![License](https://img.shields.io/github/license/s-t-e-f-a-n/ha_docker_socket_proxy)
 
 
 A Home Assistant integration that monitors Docker containers through a Docker socket proxy, providing real-time status, health checks, and service URLs for your containerized applications.
@@ -25,7 +25,7 @@ A Home Assistant integration that monitors Docker containers through a Docker so
 
 1. Ensure [HACS](https://hacs.xyz/) is installed in your Home Assistant instance
 2. In HACS, go to **Integrations** → **+** → **Add Custom Repository**
-3. Enter this repository URL: `https://github.com/s-t-e-f-a-n/ha-docker-socket-proxy`
+3. Enter this repository URL: `https://github.com/s-t-e-f-a-n/ha_docker_socket_proxy`
 4. Select **Integration** as the category
 5. Click **Add** and then **Install**
 6. Restart Home Assistant
@@ -316,5 +316,5 @@ This project is licensed under the Apache License, Version 2.0 - see the [LICENS
 
 ## Support
 
-- [GitHub Issues](https://github.com/s-t-e-f-a-n/ha-docker-socket-proxy/issues) for bug reports and feature requests
+- [GitHub Issues](https://github.com/s-t-e-f-a-n/ha_docker_socket_proxy/issues) for bug reports and feature requests
 - [Home Assistant Community](https://community.home-assistant.io) for general questions

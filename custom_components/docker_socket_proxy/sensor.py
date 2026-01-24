@@ -1,7 +1,7 @@
 """Custom integration to integrate Docker Socket Proxy with Home Assistant.
 
 For more details about this integration, please refer to
-https://github.com/s-t-e-f-a-n/ha-docker-socket-proxy
+https://github.com/s-t-e-f-a-n/ha_docker_socket_proxy
 
 Sensor platform for Docker Socket Proxy.
 """
