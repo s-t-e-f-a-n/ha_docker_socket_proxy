@@ -1,24 +1,28 @@
-name: HACS Action
+name: Validation
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   schedule:
     - cron: "0 0 * * *"
 
 jobs:
-  hacs:
-    name: HACS Validation
+  validate:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: HACS Action
+      # Official Home Assistant Hassfest validation
+      # REMARK: This validates manifest.json and code structure
+      - name: Hassfest validation
+        uses: home-assistant/actions/hassfest@master
+
+      # HACS Action validation
+      # REMARK: This ensures the repo meets HACS store requirements
+      - name: HACS validation
         uses: hacs/action@main
         with:
           category: integration
