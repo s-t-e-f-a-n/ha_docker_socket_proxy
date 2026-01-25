@@ -27,3 +27,6 @@ CONF_GRACE_PERIOD_SECONDS: Final = "grace_period_seconds"
 ATTR_CONTAINERS: Final = "containers"
 ATTR_VERSION: Final = "version"
 ATTR_DOCKER_HOSTNAME: Final = "docker_hostname"
+
+# Constant for the blueprint filename to ensure consistency
+BLUEPRINT_FILENAME = "docker_proxy_health_alert.yaml"
