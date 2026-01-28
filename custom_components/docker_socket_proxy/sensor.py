@@ -137,14 +137,14 @@ class DockerHostSensor(CoordinatorEntity[DockerProxyCoordinator], SensorEntity):
             self._last_successful_update = dt_util.now().isoformat()
 
         return {
-            "docker_hostname": self.coordinator.docker_hostname,
-            "instance_name": self._host_name,
-            "platform_name": v_info.get("Platform", ATTR_DEFAULT_NA),
-            "version": v_info.get("Version", ATTR_DEFAULT_NA),
-            "api_version": v_info.get("ApiVersion", ATTR_DEFAULT_NA),
-            "os": v_info.get("Os", ATTR_DEFAULT_NA),
-            "arch": v_info.get("Arch", ATTR_DEFAULT_NA),
-            "kernel": v_info.get("KernelVersion", ATTR_DEFAULT_NA),
+            "DockerHostname": self.coordinator.docker_hostname,
+            "Os": v_info.get("Os", ATTR_DEFAULT_NA),
+            "Arch": v_info.get("Arch", ATTR_DEFAULT_NA),
+            "Kernel": v_info.get("KernelVersion", ATTR_DEFAULT_NA),
+            "InstanceName": self._host_name,
+            "PlatformName": v_info.get("Platform", ATTR_DEFAULT_NA),
+            "Version": v_info.get("Version", ATTR_DEFAULT_NA),
+            "ApiVersion": v_info.get("ApiVersion", ATTR_DEFAULT_NA),
             "last_update": self._last_successful_update,
         }
 

@@ -1,52 +1,34 @@
 blueprint:
   name: "Docker Socket Proxy: Health Alert"
-  description: "Sends a notification when the Docker Proxy goes offline or a container becomes 'unhealthy'."
+  description: "Sends a notification when the chosen proxy host goes offline or a container becomes 'unavailable' or 'unhealthy'."
   domain: automation
   input:
     proxy_sensor:
       name: Docker Container/Socket Proxy Sensor
-      description: Select the sensor from your Docker Socket Proxy integration.
+      description: Select the host sensor from the Docker integration.
       selector:
         entity:
           filter:
-            - integration: docker_socket_proxy
-    notify_device:
-      name: Notification Device
-      description: Which device should receive the alert?
+            integration: docker_socket_proxy
+    notify_action:
+      name: Notification Action
+      description: "Choose 'Send a notification' and select your browser or mobile device."
       selector:
-        device:
-          filter:
-            - integration: mobile_app
+        action: {}
 
 variables:
-  proxy_sensor_entity: !input proxy_sensor
-  friendly_name: "{{ state_attr(proxy_sensor_entity, 'friendly_name') | default(proxy_sensor_entity) }}"
+  proxy_entity: !input proxy_sensor
 
 trigger:
   - platform: state
     entity_id: !input proxy_sensor
-    attribute: health
-    to: "unhealthy"
-  - platform: state
-    entity_id: !input proxy_sensor
-    to: "unavailable"
-    for:
-      minutes: 2
+
+condition:
+  - condition: template
+    value_template: >
+      {% set s = states(proxy_entity) | lower %}
+      {{ 'unavail' in s or 'unhealthy' in s }}
 
 action:
-  - domain: mobile_app
-    type: notify
-    device_id: !input notify_device
-    title: "🐳 Docker Alert: {{ friendly_name }}"
-    message: >
-      Attention! The status of '{{ friendly_name }}' has changed.
-      Current State: {{ states(proxy_sensor_entity) }}
-      Health Status: {{ state_attr(proxy_sensor_entity, 'health') | default('N/A') }}
-    data:
-      priority: high
-      clickAction: "/config/devices"
-      actions:
-        - action: "URI"
-          title: "View Details"
-          uri: "/config/devices"
-mode: single
+  - choose: []
+    default: !input notify_action

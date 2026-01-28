@@ -18,6 +18,13 @@ A Home Assistant integration that monitors Docker containers through a Docker so
 - **Multi-Host Support**: Monitor multiple Docker hosts with separate integrations
 - **Grace Period Cleanup**: Configurable cleanup of orphaned container sensors
 - **Rich Attributes**: Detailed metadata including ports, networks, uptime, and project info
+- **Proactive Alerting**: Includes a built-in **Blueprint** for instant notifications (Mobile/Browser) when things go wrong.
+
+### Example Table View on Your Docker Zoo :-)
+
+![HA Docker Socket Proxy Overivew](assets/ha-docker-socket-proxy_overview.png)
+
+...created from below comprehensive stacked vertical/horizontal flex-table-card example.
 
 ## Installation
 
@@ -55,11 +62,11 @@ The integration can be fine-tuned after the initial setup. Go to **Settings** �
 | Option | Description | Default |
 | :--- | :--- | :--- |
 | **Scan Interval** | How often (in seconds) the integration polls the Docker API. | `30` |
-| **Enable Grace Period** | If enabled, sensors for stopped containers are not removed immediately. | `true` |
+| **Enable Grace Period** | If enabled, sensors for vanished containers are not removed immediately. | `true` |
 | **Grace Period** | The time (in seconds) to wait before an orphaned sensor is removed. | `604800` (1 week) |
 
 > [!TIP]
-> Changes to the **Scan Interval** are applied immediately without requiring a restart of Home Assistant.
+> Changes to the options are applied immediately without requiring a restart of Home Assistant.
 
 ### Docker Socket Proxy Setup
 
@@ -87,24 +94,6 @@ services:
       start_period: "21s"
 ```
 
-## Usage
-
-The integration creates sensors for each Docker host and container:
-
-### Host Sensors
-
-- **Host Status**: Shows "X/Y running" where X is running containers and Y is total containers
-- Attributes include Docker version, platform, OS, architecture, and hostname
-
-### Container Sensors
-
-- **State**: Current container state (running, exited, paused, etc.)
-- **Attributes**:
-  - Container name, image, project (from compose labels)
-  - Uptime, health status
-  - Port mappings, network settings
-  - Service URLs (generated from `ha.web_port` labels)
-
 ### Container Labels
 
 Add labels to your containers for enhanced functionality:
@@ -115,6 +104,96 @@ labels:
   - "ha.web_port=8080:http"  # Single port
   - "ha.web_port=8080:http,8443:https"  # Multiple ports
   - "com.docker.compose.project=myproject"  # Project grouping
+```
+
+## Usage
+
+The integration creates sensors for each Docker host and container:
+
+### Host Sensor Attributes
+
+The host status sensor provides a comprehensive overview of the Docker Engine and the underlying system environment.
+
+| Attribute | Description |
+| :--- | :--- |
+| **InstanceName** | The friendly name assigned to this Docker host during setup. |
+| **DockerHostname** | The actual hostname of the machine running Docker. |
+| **Os** | The operating system of the host (e.g., `linux`). |
+| **Arch** | The system architecture (e.g., `x86_64`, `arm64`). |
+| **Kernel** | The specific kernel version of the host OS. |
+| **PlatformName** | Information about the Docker platform. |
+| **Version** | The installed Docker Engine version. |
+| **ApiVersion** | The version of the Docker API the proxy is communicating with. |
+| **last_update** | Timestamp of the last successful data poll from the proxy. |
+
+---
+
+#### Usage of Host Sensor Attributes in Dashboards
+
+You can reference them in your `Entities` or `Template` cards like this:
+
+```yaml
+# Example: Displaying Host and Engine Version
+- type: attribute
+  entity: sensor.dockersocketproxy_your_host_status
+  attribute: DockerHostname
+  name: "Host Name"
+
+- type: attribute
+  entity: sensor.dockersocketproxy_your_host_status
+  attribute: Version
+  name: "Docker Version"
+```
+
+### Container Sensor Attributes
+
+The integration extracts detailed information from Docker and provides the following attributes for each container sensor:
+
+| Attribute | Description |
+| :--- | :--- |
+| **DisplayName** | The cleaned, friendly name for the UI. |
+| **Names** | The raw Docker container names as a list. |
+| **Image** | The Docker image used by the container. |
+| **State** | The detailed container state string (e.g., `running`, `exited`). |
+| **Uptime** | Human-readable uptime (e.g., `2 hours`). |
+| **Health** | Docker health check status (`healthy`, `unhealthy`, `starting`, or `none`). |
+| **UpdateAvailable** | Status indicating if a newer image version is available. |
+| **Project** | Docker Compose project name (derived from labels). |
+| **ServiceUrls** | List of clickable URLs generated from `ha.web_port` labels. |
+| **Created** | ISO timestamp of the container creation. |
+| **Ports** | List of active port mappings (e.g., `80:80/tcp`). |
+| **NetworkSettings** | Detailed network object containing IP addresses and types. |
+| **MacAddress** | The MAC address of the container. |
+| **last_update** | Timestamp of the last successful data fetch from the proxy. |
+
+---
+
+#### Usage of Container Sensor Atributes in Dashboards
+
+You can reference them in your `Entities` or `Template` cards like this:
+
+```yaml
+# Example: Displaying Container Health and Project
+- type: attribute
+  entity: sensor.dockersocketproxy_your_container
+  attribute: Health
+  name: "Health Status"
+
+- type: attribute
+  entity: sensor.dockersocketproxy_your_container
+  attribute: Project
+  name: "Compose Project"
+
+# Example: Displaying Network and Uptime
+- type: attribute
+  entity: sensor.dockersocketproxy_your_container
+  attribute: MacAddress
+  name: "MAC Address"
+
+- type: attribute
+  entity: sensor.dockersocketproxy_your_container
+  attribute: Uptime
+  name: "Running Since"
 ```
 
 ## Dashboard Examples
@@ -130,109 +209,139 @@ entities:
 title: Docker Containers
 ```
 
-### Combined Vertical, Horizontal and Flex Table Card Example
+### Comprehensive Combined Vertical, Horizontal and Flex Table Card Example
 
 For an extensive table view of all containers, use the [flex-table-card](https://github.com/custom-cards/flex-table-card):
 
 ```yaml
 type: vertical-stack
 cards:
+  - type: conditional
+    conditions:
+      - entity: sensor.dockersocketproxy_my_docker_host_status
+        state: unavailable version
+    card:
+      type: markdown
+      content: "⚠️ TOTAL COMMUNICATION LOSS: VERSION API UNREACHABLE ⚠️"
+  - type: conditional
+    conditions:
+      - entity: sensor.dockersocketproxy_my_docker_host_status
+        state: unavailable containers
+    card:
+      type: markdown
+      content: "⚠️ PARTIAL COMMUNICATION LOSS: CONTAINERS API UNREACHABLE ⚠️"
   - type: horizontal-stack
     cards:
+      - type: entities
+        title: 🐳 Docker Engine
+        show_header_toggle: false
+        entities:
+          - type: attribute
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: InstanceName
+            name: Instance
+            icon: mdi:tag-outline
+          - entity: sensor.dockersocketproxy_my_docker_host_status
+            name: Containers
+            icon: mdi:docker
+          - type: attribute
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: PlatformName
+            name: Platform
+            icon: mdi:layers-outline
+          - type: attribute
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: Version
+            name: Engine
+            icon: mdi:engine-outline
+          - type: attribute
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: ApiVersion
+            name: API
+            icon: mdi:api
       - type: entities
         title: 🖥️ Host Machine
         show_header_toggle: false
         entities:
           - type: attribute
-            entity: sensor.dockersocketproxy_solg_docker_host_host_status
-            attribute: docker_hostname
-            name: Docker Hostname
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: DockerHostname
+            name: Hostname
             icon: mdi:dns-outline
           - type: attribute
-            entity: sensor.dockersocketproxy_solg_docker_host_host_status
-            attribute: os
-            name: Operating System
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: Os
+            name: OS
             icon: mdi:linux
           - type: attribute
-            entity: sensor.dockersocketproxy_solg_docker_host_host_status
-            attribute: arch
-            name: Architecture
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: Arch
+            name: Arch
             icon: mdi:cpu-64-bit
           - type: attribute
-            entity: sensor.dockersocketproxy_solg_docker_host_host_status
-            attribute: kernel
-            name: Kernel Version
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: Kernel
+            name: Kernel
             icon: mdi:identifier
-      - type: entities
-        title: 🐳 Docker Engine
-        show_header_toggle: false
-        entities:
-          - entity: sensor.dockersocketproxy_solg_docker_host_host_status
-            name: Running/Total
-            icon: mdi:docker
           - type: attribute
-            entity: sensor.dockersocketproxy_solg_docker_host_host_status
-            attribute: version
-            name: Engine Version
-            icon: mdi:engine-outline
-          - type: attribute
-            entity: sensor.dockersocketproxy_solg_docker_host_host_status
-            attribute: api_version
-            name: API Version
-            icon: mdi:api
-          - type: attribute
-            entity: sensor.dockersocketproxy_solg_docker_host_host_status
-            attribute: instance_name
-            name: Instance Name
-            icon: mdi:tag-outline
+            entity: sensor.dockersocketproxy_my_docker_host_status
+            attribute: last_update
+            name: Last Update
+            icon: mdi:clock-outline
   - type: custom:flex-table-card
     title: Docker Containers
     entities:
-      include: sensor.dockersocketproxy_solg_docker_host_*
-      exclude: sensor.dockersocketproxy_solg_docker_host_host_status
+      include: sensor.dockersocketproxy_my_docker_*
+      exclude: sensor.dockersocketproxy_my_docker_host_status
     strict: false
     css:
-      table+: "width: 100%; border-collapse: collapse;"
-      th+: "white-space: nowrap; padding: 8px; text-align: left;"
-      td+: "padding: 8px; vertical-align: middle;"
+      table+: "width: 100%; border-collapse: collapse; table-layout: auto;"
+      th+: >-
+        white-space: nowrap; padding: 10px; text-align: left; background-color:
+        rgba(0,0,0,0.1);
+      td+: >-
+        padding: 10px; vertical-align: middle; border-bottom: 1px solid
+        rgba(127,127,127,0.1);
+      td:nth-child(1), td:nth-child(2), td:nth-child(3): "width: 30px; text-align: center;"
     columns:
       - name: St.
-        data: state
-        modify: "x === 'running' ? '🟢' : (x === 'unavailable' || x === 'unknown' ? '⚪' : '🔴')""
+        data: State
+        modify: >-
+          !x || ['unavailable', 'unknown', 'removed'].includes(x) ? '⚪' : (x ===
+          'running' ? '🟢' : '🔴')
       - name: H.
-        data: health
-        modify: "x === 'healthy' ? '🟢' : (x === 'unhealthy' ? '🔴' : '🟡')"
+        data: Health
+        modify: >-
+          !x || ['unavailable', 'unknown', 'n/a'].includes(x) ? '⚪' : (x ===
+          'healthy' ? '🟢' : (x === 'unhealthy' ? '🔴' : '🟡'))
+      - name: Upd.
+        data: UpdateAvailable
+        modify: >-
+          !x || ['unavailable', 'unknown'].includes(x) ? '⚪' : (x === 'yes' ?
+          '🔴' : '🟢')
       - name: Project
-        data: project
-        modify: "x && typeof x === 'string' && x !== 'unknown' ? x : 'Standalone'"
+        data: Project
       - name: Container
-        data: display_name
-        modify: "x ? x : 'N/A'"
+        data: DisplayName
       - name: Image
-        data: image
-        modify: "x && typeof x === 'string' ? x.split('@')[0] : 'n/a'"
-      - name: IP Address
-        data: network_settings
-        modify: "x && x.Networks && Object.values(x.Networks)[0] ? Object.values(x.Networks)[0].IPAddress || '-' : '-'"
+        data: Image
+      - name: IP (Network)
+        data: NetworkSettings
       - name: MAC Address
-        data: network_settings
-        modify: "x && x.Networks && Object.values(x.Networks)[0] ? Object.values(x.Networks)[0].MacAddress || '-' : '-'"
-      - name: Network
-        data: network_settings
-        modify: "x && x.Networks && Object.values(x.Networks)[0] ? Object.values(x.Networks)[0].NetworkType || '-' : '-'"
-      - name: Ports (Ext:Int)
-        data: port_mappings
-        modify: "x && Array.isArray(x) && x.length > 0 ? x.join('<br>') : '-'"
+        data: MacAddress
+      - name: Ports
+        data: Ports
       - name: Uptime
-        data: uptime
-        modify: "x && x !== 'unknown' && x !== 'unavailable' ? x : '-'"
+        data: Uptime
       - name: Created
-        data: created_at
-        modify: "x && typeof x === 'string' && x.includes('T') ? x.split('T')[0] : '-'"
+        data: Created
       - name: Updated
         data: last_update
-        modify: "x && x !== 'unknown' ? new Date(x).toLocaleTimeString('de-DE', {hour:'2-digit', minute: '2-digit', second: '2-digit'}) : '-'"
-    sort_by: project+
+        modify: >-
+          !x || ['unavailable', 'unknown'].includes(x) ? '-' : new
+          Date(x).toLocaleTimeString('de-DE', {hour: '2-digit', minute:
+          '2-digit', second: '2-digit'})
+    sort_by: Project+
 grid_options:
   columns: full
   rows: auto
@@ -240,46 +349,36 @@ grid_options:
 
 This creates a sortable table showing container status with icons, health indicators, and port information.
 
-#### 🖥️ Host Machine
-| Property | Value |
-| :--- | :--- |
-| **Docker Hostname** | `my-docker-srv` |
-| **Operating System** | `Ubuntu 22.04 LTS` |
-| **Architecture** | `x86_64` |
-| **Kernel Version** | `5.15.0-101-generic` |
+#### Dashboard Impression
 
-#### 🐳 Docker Engine
-| Property | Value |
-| :--- | :--- |
-| **Running/Total** | `2/3 running` |
-| **Engine Version** | `24.0.7` |
-| **API Version** | `1.43` |
-| **Instance Name** | `My Docker Host` |
+When your Docker stack is running normally, the dashboard provides a high-density overview of your infrastructure using the `horizontal-stack` and `flex-table-card`.
 
-| St. | H. | Project | Container | Image | IP Address | Ports (Ext:Int) | Uptime | Created | Updated |
-|:---:|:---:|:---|:---|:---|:---|:---|:---|:---|:---|
-| 🟢 | 🟢 | `web-stack` | [**nginx**](http://your-ip) | `nginx:latest` | `172.18.0.10` | `80:80/tcp`<br>`443:443/tcp` | `2 hours` | `2026-01-15` | `22:26:05` |
-| 🟢 | 🟡 | `database` | **postgres** | `postgres:15` | `172.18.0.5` | `5432:5432/tcp` | `1 week` | `2026-01-01` | `22:26:05` |
-| 🔴 | 🔴 | `monitoring` | **prometheus** | `prom/prometheus` | `172.19.0.4` | `9090:9090/tcp` | `-` | `2026-01-10` | `22:26:05` |
+#### 🐳 Docker Engine & 🖥️ Host Machine
 
-### Advanced Dashboard with Groups
+| Property | Docker Engine | Host Machine |
+| :--- | :--- | :--- |
+| **Instance / Host** | `Main Server` | `docker-prod-01` |
+| **Containers / OS** | `14/15 running` | `Ubuntu 24.04 LTS` |
+| **Platform / Arch** | `linux` | `x86_64` |
+| **Engine / Kernel** | `27.1.0` | `6.8.0-1011-aws` |
+| **API / Updated** | `1.46` | `14:35:02` |
 
-Group containers by project using card-mod:
+#### Docker Containers (Live Status)
 
-```yaml
-type: entities
-title: Web Services
-entities:
-  - entity: sensor.dockersocketproxy_nas_nginx
-    name: Nginx Web Server
-  - entity: sensor.dockersocketproxy_nas_traefik
-    name: Traefik Reverse Proxy
-card_mod:
-  style: |
-    ha-card {
-      --ha-card-background: var(--card-background-color);
-    }
-```
+| St. | H. | Upd. | Project | Container | Image | IP (Network) | Uptime | Updated |
+| :---: | :---: | :---: | :--- | :--- | :--- | :--- | :--- | :--- |
+| 🟢 | 🟢 | 🟢 | `proxy` | **traefik** | `traefik:v3.1` | `172.20.0.2` | `3 weeks` | `14:35:02` |
+| 🟢 | 🟢 | 🔴 | `home-automation` | **home-assistant** | `home-assistant:stable` | `172.20.0.5` | `4 days` | `14:35:02` |
+| 🟢 | 🟡 | 🟢 | `databases` | **postgres-db** | `postgres:16-alpine` | `172.18.0.3` | `1 hour` | `14:34:58` |
+| 🔴 | ⚪ | 🟢 | `monitoring` | **grafana** | `grafana/grafana:latest` | `-` | `-` | `14:34:45` |
+| 🟢 | 🔴 | 🟢 | `media` | **plex-server** | `linuxserver/plex` | `172.20.0.15` | `12 hours` | `14:35:02` |
+
+**Legend:**
+
+- **St. (State):** 🟢 Running | 🔴 Stopped/Error | ⚪ Unavailable
+- **H. (Health):** 🟢 Healthy | 🟡 Starting | 🔴 Unhealthy | ⚪ No Check
+
+- **Upd. (Update):** 🔴 Update available | 🟢 Up to date
 
 ## Blueprints
 
