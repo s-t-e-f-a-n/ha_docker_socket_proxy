@@ -34,6 +34,7 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Schema for the initial setup dialog (Name and URL)
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_NAME, default=DEFAULT_NAME): str,
@@ -54,14 +55,16 @@ class DockerProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
+            # Normalize URL by removing trailing slashes
             url = user_input[CONF_URL].rstrip("/")
 
+            # Ensure the URL is unique to prevent duplicate integrations for the same host
             await self.async_set_unique_id(url)
             self._abort_if_unique_id_configured()
 
             try:
+                # Validate the connection to the Docker Socket Proxy using the version endpoint
                 timeout = ClientTimeout(total=5)
-
                 async with (
                     aiohttp.ClientSession() as session,
                     session.get(f"{url}/version", timeout=timeout) as response,
@@ -69,11 +72,17 @@ class DockerProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     if response.status != 200:
                         errors["base"] = "cannot_connect"
                     else:
+                        # Success: Create entry and initialize options with defaults
                         return self.async_create_entry(
                             title=user_input[CONF_NAME],
                             data={
                                 CONF_NAME: user_input[CONF_NAME],
                                 CONF_URL: url,
+                            },
+                            options={
+                                CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+                                CONF_GRACE_PERIOD_ENABLED: DEFAULT_GRACE_PERIOD_ENABLED,
+                                CONF_GRACE_PERIOD_SECONDS: DEFAULT_GRACE_PERIOD_SECONDS,
                             },
                         )
             except (aiohttp.ClientError, TimeoutError):
@@ -91,32 +100,34 @@ class DockerProxyConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> DockerOptionsFlowHandler:
-        """Get the options flow for this handler."""
+        """Return the options flow handler for this integration."""
         return DockerOptionsFlowHandler()
 
 
 class DockerOptionsFlowHandler(OptionsFlow):
-    """Handle Docker Socket Proxy options."""
+    """Handle management of Docker Socket Proxy options (Grace Period & Intervals)."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage the options."""
+        """Manage the configuration options."""
         if user_input is not None:
+            # Options were updated, save the data
             return self.async_create_entry(title="", data=user_input)
 
+        # Retrieve current options, falling back to defaults if not yet set
         options = self.config_entry.options
 
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    # Scan Interval
+                    # Frequency of data polling
                     vol.Required(
                         CONF_SCAN_INTERVAL,
                         default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
                     ): vol.All(vol.Coerce(int), vol.Range(min=5, max=3600)),
-                    # Grace Period Settings
+                    # Tombstone management for inactive/missing containers
                     vol.Required(
                         CONF_GRACE_PERIOD_ENABLED,
                         default=options.get(

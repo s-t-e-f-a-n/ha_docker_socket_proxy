@@ -1,31 +1,28 @@
-"""Custom integration to integrate Docker Socket Proxy with Home Assistant.
-
-For more details about this integration, please refer to
-https://github.com/s-t-e-f-a-n/ha_docker_socket_proxy
-
-DataUpdateCoordinator for Docker Socket Proxy.
-
-"""
+"""Coordinator for Docker Socket Proxy with smart parsing."""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
+import re
 from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
-from aiohttp import ClientResponse
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_URL
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
     ATTR_CONTAINERS,
+    ATTR_DEFAULT_NA,
+    ATTR_DEFAULT_STANDALONE,
+    ATTR_DEFAULT_STRING,
     ATTR_DOCKER_HOSTNAME,
     ATTR_VERSION,
     CONF_GRACE_PERIOD_ENABLED,
@@ -34,32 +31,29 @@ from .const import (
     DEFAULT_GRACE_PERIOD_ENABLED,
     DEFAULT_GRACE_PERIOD_SECONDS,
     DEFAULT_SCAN_INTERVAL,
+    HOST_STATUS_CONTAINERS_UNAVAILABLE,
+    HOST_STATUS_RUNNING_TEMPLATE,
+    HOST_STATUS_VERSION_UNAVAILABLE,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class DockerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Class to manage fetching Docker data from the proxy."""
+class DockerProxyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Class to manage fetching Docker data with smart parsing and update indicators."""
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
         self.url = entry.data[CONF_URL].rstrip("/")
         self.host_name = entry.title
+        self.entry = entry
+        self.last_seen: dict[str, datetime] = {}
+        self.host_status = HOST_STATUS_VERSION_UNAVAILABLE
 
-        scan_interval = entry.options.get(
-            CONF_SCAN_INTERVAL,
-            entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-        )
+        parsed_url = urlparse(self.url)
+        self.docker_hostname = parsed_url.hostname or self.url
 
-        self.grace_period_enabled = entry.options.get(
-            CONF_GRACE_PERIOD_ENABLED,
-            entry.data.get(CONF_GRACE_PERIOD_ENABLED, DEFAULT_GRACE_PERIOD_ENABLED),
-        )
-        self.grace_period_seconds = entry.options.get(
-            CONF_GRACE_PERIOD_SECONDS,
-            entry.data.get(CONF_GRACE_PERIOD_SECONDS, DEFAULT_GRACE_PERIOD_SECONDS),
-        )
+        scan_interval = entry.options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)
 
         super().__init__(
             hass,
@@ -68,160 +62,242 @@ class DockerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(seconds=int(scan_interval)),
         )
 
-    def _validate_result(self, result: Any) -> ClientResponse:
-        """Throw exception if result is a BaseException."""
-        if isinstance(result, BaseException):
-            raise result
-        return result
-
     async def _async_update_data(self) -> dict[str, Any]:
-        """Fetch container and host data from Docker Proxy in parallel."""
+        """Fetch data sequentially and process into safe UI strings."""
         session = async_get_clientsession(self.hass)
+        current_time = dt_util.now()
 
+        # 1. Version Check
+        version_info = {}
         try:
-            async with asyncio.timeout(10):
-                results = await asyncio.gather(
-                    session.get(f"{self.url}/containers/json?all=1"),
-                    session.get(f"{self.url}/version"),
-                    return_exceptions=True,
+            async with asyncio.timeout(5):
+                res = await session.get(f"{self.url}/version")
+                if res.status != 200:
+                    self.host_status = HOST_STATUS_VERSION_UNAVAILABLE
+                    return self.data or {}
+                v_raw = await res.json()
+                version_info = {
+                    "Platform": str(
+                        v_raw.get("Platform", {}).get("Name", ATTR_DEFAULT_NA)
+                    ),
+                    "Version": str(v_raw.get("Version", ATTR_DEFAULT_NA)),
+                    "ApiVersion": str(v_raw.get("ApiVersion", ATTR_DEFAULT_NA)),
+                    "Os": str(v_raw.get("Os", ATTR_DEFAULT_NA)),
+                    "Arch": str(v_raw.get("Arch", ATTR_DEFAULT_NA)),
+                    "KernelVersion": str(v_raw.get("KernelVersion", ATTR_DEFAULT_NA)),
+                }
+        except (aiohttp.ClientError, TimeoutError):
+            self.host_status = HOST_STATUS_VERSION_UNAVAILABLE
+            return self.data or {}
+
+        # 2. Containers Check
+        raw_containers = []
+        try:
+            async with asyncio.timeout(5):
+                res = await session.get(f"{self.url}/containers/json?all=1")
+                if res.status != 200:
+                    self.host_status = HOST_STATUS_CONTAINERS_UNAVAILABLE
+                    return self.data or {}
+                raw_containers = await res.json()
+        except (aiohttp.ClientError, TimeoutError):
+            self.host_status = HOST_STATUS_CONTAINERS_UNAVAILABLE
+            return self.data or {}
+
+        # 3. Processing
+        processed_containers: dict[str, Any] = {}
+        running_count = 0
+        host_ip = self.url.split("//")[-1].split(":")[0]
+
+        for container in raw_containers:
+            cid = container.get("Id", "")
+            if not cid:
+                continue
+
+            if container.get("State") == "running":
+                running_count += 1
+
+            self.last_seen[cid] = current_time
+            processed_containers[cid] = self._format_container_for_ui(
+                container, host_ip
+            )
+
+        self.host_status = HOST_STATUS_RUNNING_TEMPLATE.format(
+            x=running_count, y=len(raw_containers)
+        )
+
+        # 4. Grace Period / Tombstone Logic
+        if self.data and ATTR_CONTAINERS in self.data:
+            grace_enabled = self.entry.options.get(
+                CONF_GRACE_PERIOD_ENABLED, DEFAULT_GRACE_PERIOD_ENABLED
+            )
+            grace_seconds = self.entry.options.get(
+                CONF_GRACE_PERIOD_SECONDS, DEFAULT_GRACE_PERIOD_SECONDS
+            )
+
+            old_containers = self.data[ATTR_CONTAINERS]
+            for cid, old_entry in old_containers.items():
+                if cid not in processed_containers:
+                    last_seen_at = self.last_seen.get(cid)
+
+                    if grace_enabled and last_seen_at:
+                        diff = (current_time - last_seen_at).total_seconds()
+                        if diff <= grace_seconds:
+                            remaining = int(grace_seconds - diff)
+                            processed_containers[cid] = self._apply_tombstone(
+                                old_entry, remaining
+                            )
+                            continue
+
+                    self.last_seen.pop(cid, None)
+
+        return {
+            ATTR_CONTAINERS: processed_containers,
+            ATTR_VERSION: version_info,
+            ATTR_DOCKER_HOSTNAME: self.docker_hostname,
+        }
+
+    def _format_container_for_ui(self, container: dict, host_ip: str) -> dict[str, str]:
+        """Convert container data into pre-formatted strings for the UI."""
+        labels = container.get("Labels", {})
+        status_raw = container.get("Status", "")
+        ports_raw = container.get("Ports", [])
+
+        # 1. Names & Image
+        name = container.get("Names", ["/unknown"])[0].lstrip("/")
+        image = container.get("Image", ATTR_DEFAULT_NA).split("@")[0]
+
+        # 2. Smart Uptime & Health
+        health = ATTR_DEFAULT_NA
+        if "(" in status_raw:
+            health = status_raw.split("(")[-1].replace(")", "").lower()
+
+        # Strip "Up " and health info to get clean uptime: "Up 2 hours (healthy)" -> "2 hours"
+        uptime = re.sub(r" \(.+\)", "", status_raw).replace("Up ", "").strip()
+
+        # 3. Update Indicator (Watchtower monitor-only label)
+        if "com.centurylinklabs.watchtower.monitor-only" not in labels:
+            update_available = ATTR_DEFAULT_NA
+        else:
+            update_available = (
+                "yes"
+                if labels.get("com.centurylinklabs.watchtower.monitor-only") == "true"
+                else "no"
+            )
+
+        # 4. Service URLs & Display Name
+        display_name = name
+        service_urls_list = []
+        port_bindings = {
+            str(p.get("PrivatePort")): p.get("IP", "0.0.0.0") for p in ports_raw
+        }
+
+        if "ha.web_port" in labels:
+            for entry in labels["ha.web_port"].split(","):
+                parts = entry.strip().split(":")
+                p_num = parts[0]
+                proto = parts[1] if len(parts) > 1 else "http"
+                target = (
+                    host_ip if port_bindings.get(p_num) != "127.0.0.1" else "127.0.0.1"
+                )
+                url = f"{proto}://{target}:{p_num}"
+                service_urls_list.append(url)
+
+            if service_urls_list:
+                display_name = (
+                    f"<a href='{service_urls_list[0]}' target='_blank' "
+                    f"style='color:var(--primary-color);text-decoration:none;font-weight:bold;'>"
+                    f"{name}</a>"
                 )
 
-                container_res = self._validate_result(results[0])
-                containers = await self._parse_container_response(container_res)
+        # 5. Ports (HTML pre-formatted)
+        ports_raw = container.get("Ports", [])
+        seen_ports = set()
+        port_list = []
+        for p in ports_raw:
+            pub = p.get("PublicPort")
+            priv = p.get("PrivatePort")
+            proto = p.get("Type")  # tcp or udp
+            if pub:
+                port_key = f"{pub}:{priv}/{proto}"
+                if port_key not in seen_ports:
+                    port_list.append(f"{pub}:{priv}")
+                    seen_ports.add(port_key)
 
-                version_data: dict[str, Any] = {}
-                try:
-                    version_res = self._validate_result(results[1])
-                    version_data = await self._parse_version_response(version_res)
-                except (aiohttp.ClientError, TimeoutError) as err:
-                    _LOGGER.warning(
-                        "[%s] Optional version info could not be fetched: %s",
-                        self.host_name,
-                        err,
-                    )
+        # 6. Network & Creation
+        nets = container.get("NetworkSettings", {}).get("Networks", {})
 
-                parsed_url = urlparse(self.url)
-                docker_hostname = parsed_url.hostname or self.url
+        ip_address = ""
+        mac_address = ""
+        net_names = []
 
-                return {
-                    ATTR_CONTAINERS: containers,
-                    ATTR_VERSION: version_data,
-                    ATTR_DOCKER_HOSTNAME: docker_hostname,
-                }
+        if not nets:
+            network_display = "no network"
+            mac_address = ATTR_DEFAULT_NA
+        else:
+            for net_name, net_info in nets.items():
+                net_names.append(net_name)
+                current_ip = net_info.get("IPAddress") or net_info.get(
+                    "GlobalIPv6Address"
+                )
+                if current_ip and not ip_address:
+                    ip_address = current_ip
+                current_mac = net_info.get("MacAddress")
+                if current_mac and not mac_address:
+                    mac_address = current_mac
 
-        except (aiohttp.ClientError, TimeoutError) as err:
-            _LOGGER.error(
-                "[%s] Critical communication error with Docker Proxy at %s: %s",
-                self.host_name,
-                self.url,
-                err,
+            primary_net = net_names[0]
+            if primary_net == "host":
+                network_display = f"{host_ip} (host)"
+                mac_address = "Host Shared"
+            elif primary_net == "none":
+                network_display = "Isolated (none)"
+                mac_address = "None"
+            elif not ip_address:
+                network_display = f"No IP ({primary_net})"
+            else:
+                network_display = f"{ip_address} ({primary_net})"
+
+        created_ts = container.get("Created", 0)
+        created_str = (
+            dt_util.as_local(datetime.fromtimestamp(created_ts)).strftime(
+                "%Y-%m-%d %H:%M"
             )
-            raise UpdateFailed(f"Error communicating with API: {err}") from err
+            if created_ts
+            else ATTR_DEFAULT_NA
+        )
 
-    async def _parse_container_response(
-        self, response: ClientResponse
-    ) -> list[dict[str, Any]]:
-        """Parse containers and enrich with Project, Health and Port logic."""
-        if response.status != 200:
-            return []
-
-        raw_data: list[dict[str, Any]] = await response.json()
-        filtered_data: list[dict[str, Any]] = []
-
-        # Extract Host IP from the Proxy URL
-        host_ip = self.url.split("//")[-1].split(":")[0]
-        known_drivers = ["bridge", "host", "macvlan", "overlay", "ipvlan", "none"]
-
-        for container in raw_data:
-            labels = container.get("Labels", {})
-            status_str = container.get("Status", "")
-
-            # Health check logic
-            health_value = "unknown"
-            if "(" in status_str and ")" in status_str:
-                raw_health = status_str.split("(")[1].split(")")[0].lower()
-                if "unhealthy" in raw_health:
-                    health_value = "unhealthy"
-                elif "healthy" in raw_health:
-                    health_value = "healthy"
-
-            # Clean uptime string
-            uptime_value = status_str.split(" (")[0].replace("Up ", "").strip()
-
-            # Port logic
-            active_ports_raw = container.get("Ports", [])
-            port_bindings = {
-                str(p.get("PublicPort")): p.get("IP", "0.0.0.0")
-                for p in active_ports_raw
-                if p.get("PublicPort") is not None
-            }
-
-            # URL Generation based on label 'ha.web_port'
-            web_ports_label = labels.get("ha.web_port", "")
-            service_urls = []
-
-            if web_ports_label:
-                entries = [e.strip() for e in web_ports_label.split(",") if e.strip()]
-                for entry in entries:
-                    parts = entry.split(":")
-                    port = parts[0]
-                    protocol = parts[1] if len(parts) > 1 else "http"
-
-                    # If port is mapped to a specific IP (like 127.0.0.1), use it
-                    bind_ip = port_bindings.get(port, "0.0.0.0")
-                    final_host = host_ip if bind_ip != "127.0.0.1" else "127.0.0.1"
-
-                    service_urls.append(
-                        {
-                            "url": f"{protocol}://{final_host}:{port}",
-                            "is_local": bind_ip == "127.0.0.1",
-                        }
-                    )
-
-            filtered_data.append(
-                {
-                    "Id": container.get("Id"),
-                    "Names": container.get("Names"),
-                    "Image": container.get("Image"),
-                    "State": container.get("State"),
-                    "Status": status_str,
-                    "uptime": uptime_value,
-                    "health": health_value,
-                    "Project": labels.get("com.docker.compose.project", "Standalone"),
-                    "ServiceUrls": service_urls,
-                    "Created": container.get("Created"),
-                    "Ports": active_ports_raw,
-                    "NetworkSettings": {
-                        "Networks": {
-                            net_name: {
-                                "IPAddress": net_data.get("IPAddress"),
-                                "MacAddress": net_data.get("MacAddress"),
-                                "NetworkType": net_name
-                                if net_name in known_drivers
-                                else "bridge",
-                            }
-                            for net_name, net_data in container.get(
-                                "NetworkSettings", {}
-                            )
-                            .get("Networks", {})
-                            .items()
-                        }
-                    },
-                }
-            )
-
-        return filtered_data
-
-    async def _parse_version_response(self, response: ClientResponse) -> dict[str, Any]:
-        """Parse version response for host info."""
-        if response.status != 200:
-            return {}
-        raw_version = await response.json()
         return {
-            "Platform": raw_version.get("Platform", {}),
-            "Version": raw_version.get("Version"),
-            "ApiVersion": raw_version.get("ApiVersion"),
-            "Os": raw_version.get("Os"),
-            "Arch": raw_version.get("Arch"),
-            "KernelVersion": raw_version.get("KernelVersion"),
+            "Names": str(name),
+            "DisplayName": str(display_name),
+            "Image": str(image),
+            "State": str(container.get("State", ATTR_DEFAULT_NA)),
+            "Uptime": str(uptime or ATTR_DEFAULT_STRING),
+            "Health": str(health),
+            "UpdateAvailable": update_available,
+            "Project": str(
+                labels.get("com.docker.compose.project", ATTR_DEFAULT_STANDALONE)
+            ),
+            "ServiceUrls": ", ".join(service_urls_list)
+            if service_urls_list
+            else ATTR_DEFAULT_STRING,
+            "Created": str(created_str),
+            "Ports": "<br>".join(port_list) if port_list else ATTR_DEFAULT_STRING,
+            "NetworkSettings": str(network_display),
+            "MacAddress": str(mac_address or ATTR_DEFAULT_NA),
+        }
+
+    def _apply_tombstone(self, old: dict, remaining: int) -> dict[str, Any]:
+        return {
+            "Names": old.get("Names", ATTR_DEFAULT_NA),
+            "DisplayName": old.get("DisplayName", ATTR_DEFAULT_NA),
+            "Image": old.get("Image", ATTR_DEFAULT_NA),
+            "Project": old.get("Project", ATTR_DEFAULT_NA),
+            "State": "removed",
+            "Uptime": f"Removed ({remaining}s)",
+            "UpdateAvailable": "no",
+            "ServiceUrls": old.get("ServiceUrls", ATTR_DEFAULT_STRING),
+            "Created": old.get("Created", ATTR_DEFAULT_NA),
+            "Ports": ATTR_DEFAULT_STRING,
+            "NetworkSettings": ATTR_DEFAULT_STRING,
+            "MacAddress": ATTR_DEFAULT_STRING,
         }

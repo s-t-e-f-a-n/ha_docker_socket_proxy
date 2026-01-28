@@ -144,22 +144,22 @@ cards:
         show_header_toggle: false
         entities:
           - type: attribute
-            entity: sensor.dockersocketproxy_my_docker_host_host_status
+            entity: sensor.dockersocketproxy_solg_docker_host_host_status
             attribute: docker_hostname
             name: Docker Hostname
             icon: mdi:dns-outline
           - type: attribute
-            entity: sensor.dockersocketproxy_my_docker_host_host_status
+            entity: sensor.dockersocketproxy_solg_docker_host_host_status
             attribute: os
             name: Operating System
             icon: mdi:linux
           - type: attribute
-            entity: sensor.dockersocketproxy_my_docker_host_host_status
+            entity: sensor.dockersocketproxy_solg_docker_host_host_status
             attribute: arch
             name: Architecture
             icon: mdi:cpu-64-bit
           - type: attribute
-            entity: sensor.dockersocketproxy_my_docker_host_host_status
+            entity: sensor.dockersocketproxy_solg_docker_host_host_status
             attribute: kernel
             name: Kernel Version
             icon: mdi:identifier
@@ -167,29 +167,29 @@ cards:
         title: 🐳 Docker Engine
         show_header_toggle: false
         entities:
-          - entity: sensor.dockersocketproxy_my_docker_host_host_status
+          - entity: sensor.dockersocketproxy_solg_docker_host_host_status
             name: Running/Total
             icon: mdi:docker
           - type: attribute
-            entity: sensor.dockersocketproxy_my_docker_host_host_status
+            entity: sensor.dockersocketproxy_solg_docker_host_host_status
             attribute: version
             name: Engine Version
             icon: mdi:engine-outline
           - type: attribute
-            entity: sensor.dockersocketproxy_my_docker_host_host_status
+            entity: sensor.dockersocketproxy_solg_docker_host_host_status
             attribute: api_version
             name: API Version
             icon: mdi:api
           - type: attribute
-            entity: sensor.dockersocketproxy_my_docker_host_host_status
+            entity: sensor.dockersocketproxy_solg_docker_host_host_status
             attribute: instance_name
             name: Instance Name
             icon: mdi:tag-outline
   - type: custom:flex-table-card
     title: Docker Containers
     entities:
-      include: sensor.dockersocketproxy_my_docker_host_*
-      exclude: sensor.dockersocketproxy_my_docker_host_host_status
+      include: sensor.dockersocketproxy_solg_docker_host_*
+      exclude: sensor.dockersocketproxy_solg_docker_host_host_status
     strict: false
     css:
       table+: "width: 100%; border-collapse: collapse;"
@@ -198,39 +198,40 @@ cards:
     columns:
       - name: St.
         data: state
-        modify: "x === 'running' ? '🟢' : '🔴'"
+        modify: "x === 'running' ? '🟢' : (x === 'unavailable' || x === 'unknown' ? '⚪' : '🔴')""
       - name: H.
         data: health
         modify: "x === 'healthy' ? '🟢' : (x === 'unhealthy' ? '🔴' : '🟡')"
       - name: Project
         data: project
-        modify: x || 'Standalone'
+        modify: "x && typeof x === 'string' && x !== 'unknown' ? x : 'Standalone'"
       - name: Container
         data: display_name
+        modify: "x ? x : 'N/A'"
       - name: Image
         data: image
-        modify: x.split('@')[0]
+        modify: "x && typeof x === 'string' ? x.split('@')[0] : 'n/a'"
       - name: IP Address
         data: network_settings
-        modify: "x && x.Networks ? Object.values(x.Networks)[0]?.IPAddress || '-' : '-'"
+        modify: "x && x.Networks && Object.values(x.Networks)[0] ? Object.values(x.Networks)[0].IPAddress || '-' : '-'"
       - name: MAC Address
         data: network_settings
-        modify: "x && x.Networks ? Object.values(x.Networks)[0]?.MacAddress || '-' : '-'"
+        modify: "x && x.Networks && Object.values(x.Networks)[0] ? Object.values(x.Networks)[0].MacAddress || '-' : '-'"
       - name: Network
         data: network_settings
-        modify: "x && x.Networks ? Object.values(x.Networks)[0]?.NetworkType || '-' : '-'"
+        modify: "x && x.Networks && Object.values(x.Networks)[0] ? Object.values(x.Networks)[0].NetworkType || '-' : '-'"
       - name: Ports (Ext:Int)
         data: port_mappings
-        modify: "x && x.length > 0 ? x.join('<br>') : '-'"
+        modify: "x && Array.isArray(x) && x.length > 0 ? x.join('<br>') : '-'"
       - name: Uptime
         data: uptime
-        modify: "x === 'unknown' || !x ? '-' : x"
+        modify: "x && x !== 'unknown' && x !== 'unavailable' ? x : '-'"
       - name: Created
         data: created_at
-        modify: "x && x.includes('T') ? x.split('T')[0] : '-'"
+        modify: "x && typeof x === 'string' && x.includes('T') ? x.split('T')[0] : '-'"
       - name: Updated
         data: last_update
-        modify: "x ? new Date(x).toLocaleTimeString('de-DE', {hour: '2-digit', minute: '2-digit', second: '2-digit'}) : '-'"
+        modify: "x && x !== 'unknown' ? new Date(x).toLocaleTimeString('de-DE', {hour:'2-digit', minute: '2-digit', second: '2-digit'}) : '-'"
     sort_by: project+
 grid_options:
   columns: full

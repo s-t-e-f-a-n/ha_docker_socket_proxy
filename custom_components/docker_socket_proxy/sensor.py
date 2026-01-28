@@ -8,9 +8,7 @@ Sensor platform for Docker Socket Proxy.
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
-import time
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -21,18 +19,15 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util, slugify
 
-# Use constants for consistency
 from .const import (
     ATTR_CONTAINERS,
-    ATTR_DOCKER_HOSTNAME,
+    ATTR_DEFAULT_NA,
     ATTR_VERSION,
     CONF_GRACE_PERIOD_ENABLED,
-    CONF_GRACE_PERIOD_SECONDS,
     DEFAULT_GRACE_PERIOD_ENABLED,
-    DEFAULT_GRACE_PERIOD_SECONDS,
     DOMAIN,
 )
-from .coordinator import DockerDataUpdateCoordinator
+from .coordinator import DockerProxyCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,254 +38,187 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Docker sensors from a config entry."""
-    coordinator: DockerDataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator: DockerProxyCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     # Initialize with the Host Status sensor
     entities: list[SensorEntity] = [DockerHostSensor(coordinator, entry)]
 
-    # Track created container names and their last seen timestamp
-    current_container_names: set[str] = set()
-    last_seen: dict[str, float] = {}
+    # Track created container IDs to avoid duplicate entity creation
+    current_container_ids: set[str] = set()
 
     @callback
     def async_manage_entities() -> None:
-        """Add new containers and cleanup orphaned entities with a grace period."""
+        """Add new container sensors and cleanup orphaned entities from registry."""
         new_entities: list[SensorEntity] = []
-        containers = coordinator.data.get(ATTR_CONTAINERS, [])
+        container_data = coordinator.data.get(ATTR_CONTAINERS, {})
 
-        # 1. Map current names from Docker API and update last seen
-        now_ts = time.time()
-        active_docker_names = {c.get("Names", [""])[0].lstrip("/") for c in containers}
-        active_docker_names.discard("")  # Remove empty strings
-
-        for name in active_docker_names:
-            last_seen[name] = now_ts
-
-        # 2. DISCOVERY: Add new containers found in the socket
-        for name in active_docker_names:
-            if name not in current_container_names:
-                _LOGGER.debug("Discovering new Docker container: %s", name)
-                new_entities.append(DockerContainerSensor(coordinator, name, entry))
-                current_container_names.add(name)
+        # 1. Discovery: Add new sensors for containers found in coordinator data
+        for cid, data in container_data.items():
+            if cid not in current_container_ids:
+                _LOGGER.debug(
+                    "Discovering new Docker container sensor: %s", data.get("Names")
+                )
+                new_entities.append(DockerContainerSensor(coordinator, cid, entry))
+                current_container_ids.add(cid)
 
         if new_entities:
             async_add_entities(new_entities)
 
-        # 3. CLEANUP: Remove orphaned entities after grace period
+        # 2. Cleanup: Remove orphaned entities from the HA Entity Registry
         cleanup_enabled = entry.options.get(
             CONF_GRACE_PERIOD_ENABLED, DEFAULT_GRACE_PERIOD_ENABLED
         )
         if not cleanup_enabled:
             return
 
-        grace_period = entry.options.get(
-            CONF_GRACE_PERIOD_SECONDS, DEFAULT_GRACE_PERIOD_SECONDS
-        )
-
         entity_reg = er.async_get(hass)
         registered_entities = er.async_entries_for_config_entry(
             entity_reg, entry.entry_id
         )
 
-        # Determine valid unique_ids (active OR within grace period)
+        # Define valid unique IDs (Host sensor + currently tracked containers)
         valid_unique_ids = {f"{entry.entry_id}_host_status"}
+        for cid in container_data:
+            valid_unique_ids.add(f"{entry.entry_id}_{cid}")
 
-        for name, ts in list(last_seen.items()):
-            if name in active_docker_names or (now_ts - ts) < grace_period:
-                valid_unique_ids.add(f"{entry.entry_id}_{name}")
-            else:
-                last_seen.pop(name)
-
+        # Remove entities that are no longer in the valid set (expired grace period)
         for entity_entry in registered_entities:
             if entity_entry.unique_id not in valid_unique_ids:
                 _LOGGER.info(
-                    "Grace period expired for Docker entity: %s, removing",
+                    "Grace period expired or container purged: %s, removing from registry",
                     entity_entry.entity_id,
                 )
                 entity_reg.async_remove(entity_entry.entity_id)
 
-                name_in_id = entity_entry.unique_id.replace(f"{entry.entry_id}_", "")
-                current_container_names.discard(name_in_id)
+                # Cleanup internal tracking set
+                cid_from_id = entity_entry.unique_id.replace(f"{entry.entry_id}_", "")
+                current_container_ids.discard(cid_from_id)
 
-    # Initial run to setup existing containers
+    # Initial discovery run
     async_manage_entities()
 
-    # Link management to coordinator updates
+    # Link entity management to coordinator data updates
     entry.async_on_unload(coordinator.async_add_listener(async_manage_entities))
 
-    # Add the initial batch (Host sensor and initial containers)
+    # Register initial batch of entities
     async_add_entities(entities)
 
 
-class DockerHostSensor(CoordinatorEntity[DockerDataUpdateCoordinator], SensorEntity):
+class DockerHostSensor(CoordinatorEntity[DockerProxyCoordinator], SensorEntity):
     """Sensor representing the overall status of a Docker Host."""
 
     _attr_icon = "mdi:server-network"
     _attr_has_entity_name = True
 
-    def __init__(
-        self, coordinator: DockerDataUpdateCoordinator, entry: ConfigEntry
-    ) -> None:
+    def __init__(self, coordinator: DockerProxyCoordinator, entry: ConfigEntry) -> None:
         """Initialize the host sensor."""
         super().__init__(coordinator)
         self._attr_name = "Host Status"
         self._attr_unique_id = f"{entry.entry_id}_host_status"
         self._host_name = entry.title
+        self._last_successful_update: str | None = None
         instance_slug = slugify(entry.title)
         self.entity_id = f"sensor.dockersocketproxy_{instance_slug}_host_status"
 
     @property
     def native_value(self) -> str:
-        """Return the ratio of running containers to total containers."""
-        containers = self.coordinator.data.get(ATTR_CONTAINERS, [])
-        total = len(containers)
-        running = sum(1 for c in containers if c.get("State") == "running")
-        return f"{running}/{total} running"
+        """Return the formatted host status (e.g., '12/15 running')."""
+        return self.coordinator.host_status
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return detailed host metadata."""
+        """Return detailed host metadata from the coordinator's version check."""
         v_info = self.coordinator.data.get(ATTR_VERSION, {})
+        host_status = self.coordinator.host_status
+
+        # Update timestamp only if host is available
+        # Check for keywords "Unavailable" or "unavailable" in host_status
+        if not any(word in host_status for word in ["Unavailable", "unavailable"]):
+            self._last_successful_update = dt_util.now().isoformat()
+
         return {
-            "docker_hostname": self.coordinator.data.get(
-                ATTR_DOCKER_HOSTNAME, "unknown"
-            ),
+            "docker_hostname": self.coordinator.docker_hostname,
             "instance_name": self._host_name,
-            "platform_name": v_info.get("Platform", {}).get("Name", "unknown"),
-            "version": v_info.get("Version", "unknown"),
-            "api_version": v_info.get("ApiVersion", "unknown"),
-            "os": v_info.get("Os", "unknown"),
-            "arch": v_info.get("Arch", "unknown"),
-            "kernel": v_info.get("KernelVersion", "unknown"),
-            "last_update": datetime.now().isoformat(),
+            "platform_name": v_info.get("Platform", ATTR_DEFAULT_NA),
+            "version": v_info.get("Version", ATTR_DEFAULT_NA),
+            "api_version": v_info.get("ApiVersion", ATTR_DEFAULT_NA),
+            "os": v_info.get("Os", ATTR_DEFAULT_NA),
+            "arch": v_info.get("Arch", ATTR_DEFAULT_NA),
+            "kernel": v_info.get("KernelVersion", ATTR_DEFAULT_NA),
+            "last_update": self._last_successful_update,
         }
 
 
-class DockerContainerSensor(
-    CoordinatorEntity[DockerDataUpdateCoordinator], SensorEntity
-):
-    """Sensor representing an individual Docker container."""
+class DockerContainerSensor(CoordinatorEntity[DockerProxyCoordinator], SensorEntity):
+    """Sensor representing an individual Docker container with flattened attributes."""
 
     def __init__(
         self,
-        coordinator: DockerDataUpdateCoordinator,
-        container_name: str,
+        coordinator: DockerProxyCoordinator,
+        container_id: str,
         entry: ConfigEntry,
     ) -> None:
         """Initialize the container sensor."""
         super().__init__(coordinator)
-        self._container_name = container_name
+        self._cid = container_id
         self._host_name = entry.title
+        self._last_successful_update: str | None = None
 
-        self._attr_name = f"{self._host_name} {self._container_name}"
-        self._attr_unique_id = f"{entry.entry_id}_{self._container_name}"
+        # Initial name fetch for entity identification
+        data = self.coordinator.data[ATTR_CONTAINERS].get(self._cid, {})
+        clean_name = data.get("Names", "unknown")
 
-        self.entity_id = f"sensor.dockersocketproxy_{slugify(self._host_name)}_{slugify(self._container_name)}"
-
-    def _get_container_data(self) -> dict[str, Any] | None:
-        """Find this container's data by name in the current dataset."""
-        return next(
-            (
-                c
-                for c in self.coordinator.data.get(ATTR_CONTAINERS, [])
-                if c.get("Names", [""])[0].lstrip("/") == self._container_name
-            ),
-            None,
+        self._attr_name = f"{self._host_name} {clean_name}"
+        self._attr_unique_id = f"{entry.entry_id}_{self._cid}"
+        self.entity_id = (
+            f"sensor.dockersocketproxy_{slugify(self._host_name)}_{slugify(clean_name)}"
         )
 
     @property
     def native_value(self) -> str:
-        """Return the current state of the container."""
-        if data := self._get_container_data():
-            return str(data.get("State", "unavailable"))
-        return "unavailable"
+        """Return the current State of the container (running, exited, removed)."""
+        data = self.coordinator.data[ATTR_CONTAINERS].get(self._cid)
+        if data:
+            return data.get("State", ATTR_DEFAULT_NA)
+        return "removed"
 
     @property
     def icon(self) -> str:
-        """Return icon based on container state."""
-        if (data := self._get_container_data()) and data.get("State") == "running":
+        """Return different icons based on whether the container is running."""
+        data = self.coordinator.data[ATTR_CONTAINERS].get(self._cid)
+        if data and data.get("State") == "running":
             return "mdi:docker"
         return "mdi:package-variant-closed"
 
     @property
-    def available(self) -> bool:
-        """Return True if container data is still available in coordinator."""
-        return self._get_container_data() is not None
-
-    @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return all enriched container attributes including ports."""
+        """Return enriched attributes pre-formatted as strings by the coordinator."""
+        data = self.coordinator.data[ATTR_CONTAINERS].get(self._cid)
 
-        # Default attributes if data is missing
-        attrs = {
-            "host_name": getattr(self, "_host_name", "unknown"),
-            "container_name": getattr(self, "_container_name", "unknown"),
-            "display_name": getattr(self, "_container_name", "unknown"),
-            "state": "unavailable",
-            "project": "unknown",
-            "uptime": "unknown",
-            "health": "unknown",
-            "image": "unknown",
-            "port_mappings": [],
-            "network_settings": {},
-            "created_at": "unknown",
-            "last_update": dt_util.now().isoformat(),
+        if not data:
+            return {}
+
+        # Fetch current host status for update timestamp logic
+        host_status = self.coordinator.host_status
+
+        # Update timestamp ONLY if host is available
+        if not any(word in host_status for word in ["Unavailable", "unavailable"]):
+            self._last_successful_update = dt_util.now().isoformat()
+
+        # Directly passing pre-formatted UI strings for flex-table-card compatibility
+        return {
+            "Names": data.get("Names"),
+            "DisplayName": data.get("DisplayName"),
+            "Image": data.get("Image"),
+            "State": data.get("State"),
+            "Uptime": data.get("Uptime"),
+            "Health": data.get("Health"),
+            "UpdateAvailable": data.get("UpdateAvailable"),
+            "Project": data.get("Project"),
+            "ServiceUrls": data.get("ServiceUrls"),
+            "Created": data.get("Created"),
+            "Ports": data.get("Ports"),
+            "NetworkSettings": data.get("NetworkSettings"),
+            "MacAddress": data.get("MacAddress"),
+            "last_update": self._last_successful_update,
         }
-
-        if not self.coordinator or self.coordinator.data is None:
-            return attrs
-        data = self._get_container_data()
-        if data is None:
-            return attrs
-
-        # Extract and format unique Port Mappings (e.g., 8080:80/tcp)
-        # Using a set to automatically filter duplicate IPv4/IPv6 entries
-        port_mappings_set: set[str] = set()
-        raw_ports = data.get("Ports", [])
-
-        for port in raw_ports:
-            p_type = port.get("Type", "tcp")
-            private = port.get("PrivatePort")
-            public = port.get("PublicPort")
-
-            if public:
-                # Result: "8080:80/tcp"
-                port_mappings_set.add(f"{public}:{private}/{p_type}")
-            elif private:
-                # Result: "80/tcp"
-                port_mappings_set.add(f"{private}/{p_type}")
-
-        # Handle Service URLs for the display name link
-        urls: list[dict[str, Any]] = data.get("ServiceUrls", [])
-        if urls:
-            primary_url = urls[0].get("url")
-            display_name = (
-                f"<a href='{primary_url}' target='_blank' "
-                "style='color:var(--primary-color);text-decoration:none;font-weight:bold;'>"
-                f"{self._container_name}</a>"
-            )
-        else:
-            display_name = self._container_name
-
-        created_iso = "unknown"
-        if raw_created := data.get("Created"):
-            try:
-                created_iso = datetime.fromtimestamp(float(raw_created)).isoformat()
-            except (ValueError, TypeError):
-                created_iso = "unknown"
-
-        attrs.update(
-            {
-                "display_name": display_name,
-                "project": data.get("Project", "Standalone"),
-                "state": data.get("State"),
-                "uptime": data.get("uptime"),
-                "health": data.get("health"),
-                "created_at": created_iso,
-                "image": data.get("Image"),
-                "network_settings": data.get("NetworkSettings"),
-                "port_mappings": sorted(port_mappings_set),
-            }
-        )
-
-        return attrs
