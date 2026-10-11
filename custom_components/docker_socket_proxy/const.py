@@ -26,6 +26,19 @@ CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_GRACE_PERIOD_ENABLED: Final = "grace_period_enabled"
 CONF_GRACE_PERIOD_SECONDS: Final = "grace_period_seconds"
 
+# TLS Configuration Keys (stored in the config entry data, all optional).
+# Values are PEM text. Leaving all of them out keeps the previous behaviour:
+# plain http, or https verified against the system trust store.
+CONF_CA_CERT: Final = "ca_cert"
+CONF_CLIENT_CERT: Final = "client_cert"
+CONF_CLIENT_KEY: Final = "client_key"
+CONF_CLIENT_KEY_PASSWORD: Final = "client_key_password"
+# Reconfigure-only form switch: remove all stored TLS material
+CONF_CLEAR_TLS: Final = "clear_tls"
+
+# Config entry data keys holding secret material; never log or expose these.
+TLS_SECRET_KEYS: Final = (CONF_CLIENT_KEY, CONF_CLIENT_KEY_PASSWORD)
+
 # Host Status states (The logic we defined for the host_status entity)
 HOST_STATUS_VERSION_UNAVAILABLE: Final = "unavailable version"
 HOST_STATUS_CONTAINERS_UNAVAILABLE: Final = "unavailable containers"
