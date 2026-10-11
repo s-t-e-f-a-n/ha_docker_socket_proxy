@@ -6,6 +6,7 @@ import asyncio
 from datetime import datetime, timedelta
 import logging
 import re
+import ssl
 from typing import Any
 from urllib.parse import urlparse
 
@@ -42,8 +43,19 @@ _LOGGER = logging.getLogger(__name__)
 class DockerProxyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     """Class to manage fetching Docker data with smart parsing and update indicators."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
-        """Initialize the coordinator."""
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        ssl_context: ssl.SSLContext | None = None,
+    ) -> None:
+        """Initialize the coordinator.
+
+        ``ssl_context`` carries the custom CA / client certificate, if any. When
+        it is None the shared Home Assistant session defaults apply.
+        """
+        self.ssl_context = ssl_context
+        self._last_error: str | None = None
         self.url = entry.data[CONF_URL].rstrip("/")
         self.host_name = entry.title
         self.entry = entry
@@ -62,6 +74,72 @@ class DockerProxyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(seconds=int(scan_interval)),
         )
 
+    @property
+    def last_error(self) -> str | None:
+        """Most recent failure reason, or None while the host is reachable."""
+        return self._last_error
+
+    def _report_error(self, stage: str, reason: str | None) -> None:
+        """Log a failure once per distinct reason; log recovery once.
+
+        Polling happens every scan interval, so repeating the same warning
+        would flood the log while a host is down.
+        """
+        if reason == self._last_error:
+            return
+        if reason is None:
+            _LOGGER.info("%s: %s is reachable again", self.host_name, self.url)
+        else:
+            _LOGGER.warning("%s: %s failed for %s: %s", self.host_name, stage, self.url, reason)
+        self._last_error = reason
+
+    @staticmethod
+    def _describe_error(err: BaseException) -> str:
+        """Turn a request exception into a short, actionable reason."""
+        if isinstance(err, aiohttp.ClientConnectorCertificateError):
+            return (
+                "TLS certificate verification failed "
+                "(untrusted CA or host name does not match the certificate)"
+            )
+        if isinstance(err, aiohttp.ClientSSLError):
+            return (
+                "TLS handshake failed (the proxy may require a client "
+                "certificate, or the CA/client certificate is wrong)"
+            )
+        if isinstance(err, aiohttp.ServerDisconnectedError):
+            return (
+                "connection closed by the server (with TLS this usually means the "
+                "proxy requires a client certificate; otherwise check the scheme and port)"
+            )
+        if isinstance(err, aiohttp.ClientConnectorError):
+            return "connection refused or host unreachable"
+        if isinstance(err, TimeoutError):
+            return "request timed out"
+        return f"{type(err).__name__}: {err}"
+
+    async def _get_json(
+        self, session: aiohttp.ClientSession, path: str
+    ) -> tuple[int, Any]:
+        """GET ``path`` from the proxy and return (status, parsed JSON or None)."""
+        kwargs: dict[str, Any] = {}
+        if self.ssl_context is not None:
+            kwargs["ssl"] = self.ssl_context
+        async with asyncio.timeout(5):
+            res = await session.get(f"{self.url}{path}", **kwargs)
+            if res.status != 200:
+                return res.status, None
+            return res.status, await res.json()
+
+    @staticmethod
+    def _http_reason(status: int) -> str:
+        """Describe a non-200 response from the proxy."""
+        if status in (401, 403):
+            return (
+                f"HTTP {status}: the proxy denied this request "
+                "(check its access settings for this endpoint)"
+            )
+        return f"unexpected HTTP status {status}"
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data sequentially and process into safe UI strings."""
         session = async_get_clientsession(self.hass)
@@ -70,38 +148,42 @@ class DockerProxyCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         # 1. Version Check
         version_info = {}
         try:
-            async with asyncio.timeout(5):
-                res = await session.get(f"{self.url}/version")
-                if res.status != 200:
-                    self.host_status = HOST_STATUS_VERSION_UNAVAILABLE
-                    return self.data or {}
-                v_raw = await res.json()
-                version_info = {
-                    "Platform": str(
-                        v_raw.get("Platform", {}).get("Name", ATTR_DEFAULT_NA)
-                    ),
-                    "Version": str(v_raw.get("Version", ATTR_DEFAULT_NA)),
-                    "ApiVersion": str(v_raw.get("ApiVersion", ATTR_DEFAULT_NA)),
-                    "Os": str(v_raw.get("Os", ATTR_DEFAULT_NA)),
-                    "Arch": str(v_raw.get("Arch", ATTR_DEFAULT_NA)),
-                    "KernelVersion": str(v_raw.get("KernelVersion", ATTR_DEFAULT_NA)),
-                }
-        except (aiohttp.ClientError, TimeoutError):
+            status, v_raw = await self._get_json(session, "/version")
+            if status != 200:
+                self.host_status = HOST_STATUS_VERSION_UNAVAILABLE
+                self._report_error("version check", self._http_reason(status))
+                return self.data or {}
+            version_info = {
+                "Platform": str(
+                    v_raw.get("Platform", {}).get("Name", ATTR_DEFAULT_NA)
+                ),
+                "Version": str(v_raw.get("Version", ATTR_DEFAULT_NA)),
+                "ApiVersion": str(v_raw.get("ApiVersion", ATTR_DEFAULT_NA)),
+                "Os": str(v_raw.get("Os", ATTR_DEFAULT_NA)),
+                "Arch": str(v_raw.get("Arch", ATTR_DEFAULT_NA)),
+                "KernelVersion": str(v_raw.get("KernelVersion", ATTR_DEFAULT_NA)),
+            }
+        except (aiohttp.ClientError, TimeoutError) as err:
             self.host_status = HOST_STATUS_VERSION_UNAVAILABLE
+            self._report_error("version check", self._describe_error(err))
             return self.data or {}
 
         # 2. Containers Check
         raw_containers = []
         try:
-            async with asyncio.timeout(5):
-                res = await session.get(f"{self.url}/containers/json?all=1")
-                if res.status != 200:
-                    self.host_status = HOST_STATUS_CONTAINERS_UNAVAILABLE
-                    return self.data or {}
-                raw_containers = await res.json()
-        except (aiohttp.ClientError, TimeoutError):
+            status, raw_containers = await self._get_json(
+                session, "/containers/json?all=1"
+            )
+            if status != 200:
+                self.host_status = HOST_STATUS_CONTAINERS_UNAVAILABLE
+                self._report_error("container list", self._http_reason(status))
+                return self.data or {}
+        except (aiohttp.ClientError, TimeoutError) as err:
             self.host_status = HOST_STATUS_CONTAINERS_UNAVAILABLE
+            self._report_error("container list", self._describe_error(err))
             return self.data or {}
+
+        self._report_error("update", None)
 
         # 3. Processing
         processed_containers: dict[str, Any] = {}

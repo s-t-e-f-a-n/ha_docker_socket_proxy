@@ -1,0 +1,75 @@
+{
+  "title": "Docker Socket Proxy",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Docker Socket Proxy",
+        "description": "Enter the connection details for your Docker Proxy. For an HTTPS proxy that uses a private CA or requires client certificates (mutual TLS), upload the files below; leave them empty otherwise.",
+        "data": {
+          "name": "Instance Name (e.g., NAS)",
+          "url": "Proxy URL",
+          "ca_cert": "CA certificate (optional)",
+          "client_cert": "Client certificate (optional)",
+          "client_key": "Client private key (optional)",
+          "client_key_password": "Client key passphrase (optional)"
+        },
+        "data_description": {
+          "ca_cert": "PEM file used to verify the proxy's certificate. Only needed if the proxy uses a private or self-signed CA. Defaults to the system trust store.",
+          "client_cert": "PEM client certificate, for proxies that require mutual TLS. Must be provided together with the private key.",
+          "client_key": "PEM private key matching the client certificate. Stored in the config entry like other credentials.",
+          "client_key_password": "Only needed if the private key is encrypted.",
+          "url": "Address of the Docker socket proxy: http or https, host name or IP address, and port (for example 192.168.1.100:2375). Use https for a TLS-protected proxy."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Docker Socket Proxy",
+        "description": "Change the proxy URL or TLS files. Existing entities and history are kept. Currently stored: {stored}. Leave a file field empty to keep the stored file.",
+        "data": {
+          "url": "Proxy URL",
+          "ca_cert": "CA certificate (optional)",
+          "client_cert": "Client certificate (optional)",
+          "client_key": "Client private key (optional)",
+          "client_key_password": "Client key passphrase (optional)",
+          "clear_tls": "Remove stored TLS certificates"
+        },
+        "data_description": {
+          "ca_cert": "PEM file used to verify the proxy's certificate. Only needed if the proxy uses a private or self-signed CA. Defaults to the system trust store.",
+          "client_cert": "PEM client certificate, for proxies that require mutual TLS. Must be provided together with the private key.",
+          "client_key": "PEM private key matching the client certificate. Stored in the config entry like other credentials.",
+          "client_key_password": "Only needed if the private key is encrypted.",
+          "clear_tls": "Deletes the CA certificate, client certificate and key from this entry. Upload new files above to replace them instead.",
+          "url": "Address of the Docker socket proxy: http or https, host name or IP address, and port (for example 192.168.1.100:2375). Use https for a TLS-protected proxy."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Docker Proxy, check the URL",
+      "unknown": "Unexpected error occurred",
+      "ssl_error": "TLS handshake failed. Check that the CA certificate trusts the proxy and that the URL host name matches the proxy certificate.",
+      "invalid_ca_cert": "The CA certificate is not a valid PEM certificate",
+      "invalid_client_cert": "The client certificate is not a valid PEM certificate",
+      "invalid_client_key": "The client private key is not a valid PEM key",
+      "client_cert_key_required": "Provide both the client certificate and the client private key, or neither",
+      "client_cert_key_mismatch": "The client certificate and private key do not belong together",
+      "client_key_password_required": "The private key is encrypted; enter its passphrase",
+      "client_key_password_incorrect": "The private key passphrase is incorrect"
+    },
+    "abort": {
+      "already_configured": "This Docker host is already configured",
+      "reconfigure_successful": "Reconfiguration successful"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Docker Options",
+        "description": "Configure scan interval and entity cleanup with retention",
+        "data": {
+          "scan_interval": "Scan Interval (seconds) for updating container states",
+          "grace_period_enabled": "Enable Grace Period for orphaned containers",
+          "grace_period_seconds": "Grace Period (seconds) before removal"
+        }
+      }
+    }
+  }
+}

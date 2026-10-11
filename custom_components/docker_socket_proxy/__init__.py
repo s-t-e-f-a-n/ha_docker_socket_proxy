@@ -14,10 +14,12 @@ import shutil
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryError
 
 # Import constants and the coordinator class
 from .const import BLUEPRINT_FILENAME, DOMAIN, PLATFORMS
 from .coordinator import DockerProxyCoordinator
+from .tls import DockerProxyTLSError, build_ssl_context
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,9 +30,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Deploy or update the blueprint before setting up platforms to ensure it's available
     await async_install_blueprint(hass)
 
+    # Build the TLS context (custom CA / client certificate) off the event loop.
+    # It is None for plain http or default-trust https, which keeps the previous
+    # behaviour. Stored material that no longer loads is a configuration error
+    # the user must fix via Reconfigure, so do not retry it endlessly.
+    try:
+        ssl_context = await hass.async_add_executor_job(build_ssl_context, entry.data)
+    except DockerProxyTLSError as err:
+        raise ConfigEntryError(
+            f"Invalid TLS configuration ({err.reason}); use Reconfigure to fix it"
+        ) from err
+
     # Initialize the coordinator with the full entry object
     # This allows the coordinator to access entry.options and entry.data["url"]
-    coordinator = DockerProxyCoordinator(hass, entry)
+    coordinator = DockerProxyCoordinator(hass, entry, ssl_context)
 
     # Trigger the first refresh to ensure we have data before creating entities
     # This will set the initial host_status and populate the container list

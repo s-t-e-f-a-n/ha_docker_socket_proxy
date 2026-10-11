@@ -4,9 +4,11 @@
 This is a Home Assistant custom integration that monitors Docker containers via a Docker socket proxy API. It uses the coordinator pattern for data fetching and dynamic sensor entities.
 
 **Key Components:**
-- `coordinator.py`: Fetches data from `/containers/json` and `/version` endpoints in parallel
+- `coordinator.py`: Fetches data from `/version` and `/containers/json` sequentially; passes the optional SSL context via `ssl=` and logs each distinct failure reason once
+- `tls.py`: Builds an `ssl.SSLContext` from PEM text in the config entry (optional private CA, mTLS client cert/key/passphrase). Server verification is always on; there is intentionally no skip-verify option
+- `diagnostics.py`: Redacts keys, passphrases, certificate PEMs and the proxy host
 - `sensor.py`: Creates host sensor (running/total ratio) and per-container sensors with detailed attributes
-- `config_flow.py`: Handles setup with URL validation via `/version` endpoint
+- `config_flow.py`: Setup and in-place Reconfigure (URL + TLS file uploads) with validation via `/version`; reconfigure keeps the config entry so entities and history survive, and updates the entry's unique ID (the URL)
 - Dynamic entity management with grace period cleanup for orphaned containers
 
 ## Data Flow
@@ -25,6 +27,7 @@ This is a Home Assistant custom integration that monitors Docker containers via 
 - Supports multiple Docker hosts via separate config entries
 - Options flow for grace period settings (enabled/disabled, seconds)
 - URL validation in config flow ensures proxy connectivity
+- TLS fields are optional; entries saved before TLS support (no TLS keys) must keep working unchanged
 
 ## Development Notes
 - No external dependencies; uses aiohttp for API calls
@@ -33,4 +36,4 @@ This is a Home Assistant custom integration that monitors Docker containers via 
 - Container names stripped of leading `/` for consistency
 
 ## Testing
-Run Home Assistant with the integration loaded; verify sensors appear for containers and update on state changes.
+`pip install -r requirements_test.txt && pytest` (Python 3.13+). Tests live in `tests/` and use `pytest-homeassistant-custom-component`; `tests/pki.py` generates throwaway certificates in memory and `test_integration.py` talks to a real local mTLS server. Also verify manually that sensors appear for containers and update on state changes.
