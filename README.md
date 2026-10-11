@@ -53,7 +53,8 @@ A Home Assistant integration that monitors Docker containers through a Docker so
 2. Search for "Docker Socket Proxy" and select it
 3. Enter:
    - **Instance Name**: A friendly name for this Docker host (e.g., "NAS", "Server")
-   - **Proxy URL**: The URL of your Docker socket proxy (e.g., `http://192.168.1.100:2375`)
+   - **Proxy URL**: The URL of your Docker socket proxy (e.g., `http://192.168.1.100:2375`, or `https://docker.example.com:2376` for a TLS-protected proxy)
+   - *(Optional)* **CA certificate**, **Client certificate**, **Client private key** and **Client key passphrase**: only needed for an HTTPS proxy that uses a private CA and/or requires client certificates. See [Securing the connection (TLS / mutual TLS)](#securing-the-connection-tls--mutual-tls).
 
 ### Configuration & Options
 
@@ -93,6 +94,58 @@ services:
       retries: 3
       start_period: "21s"
 ```
+
+### Securing the connection (TLS / mutual TLS)
+
+The integration can talk to a proxy that is protected with HTTPS, optionally with
+**mutual TLS (mTLS)**, where the proxy only accepts clients that present a
+certificate from a CA you trust. This is the recommended way to expose a proxy
+beyond `localhost`, especially if it allows more than read-only access.
+
+[Tecnativa's docker-socket-proxy](https://github.com/Tecnativa/docker-socket-proxy)
+does not speak TLS itself, so put a TLS terminator in front of it (nginx, Caddy,
+HAProxy, Traefik, ...). Minimal nginx example, run next to the proxy container
+(`dockerproxy` here is the proxy's container name):
+
+```nginx
+events {}
+stream {
+    server {
+        listen 2376 ssl;
+        proxy_pass dockerproxy:2375;
+
+        ssl_certificate         /certs/server.pem;
+        ssl_certificate_key     /certs/server.key;
+        ssl_protocols           TLSv1.2 TLSv1.3;
+
+        # Remove the next two lines for server-side TLS only (no client certificate)
+        ssl_client_certificate  /certs/ca.pem;
+        ssl_verify_client       on;
+    }
+}
+```
+
+Then, in Home Assistant, use an `https://` URL and upload the files:
+
+| Field | What to upload | When |
+| :--- | :--- | :--- |
+| **CA certificate** | PEM of the CA that signed the proxy's certificate (or the proxy's own certificate if self-signed) | Only if the proxy certificate is not signed by a publicly trusted CA |
+| **Client certificate** | PEM client certificate | Only if the proxy requires mTLS |
+| **Client private key** | PEM key matching the client certificate | Required together with the client certificate |
+| **Client key passphrase** | Passphrase | Only if the private key is encrypted |
+
+Notes:
+
+- The proxy's certificate is **always verified**, and there is deliberately no "skip verification" switch. The host name in the URL must match a name or IP address in the certificate's *Subject Alternative Name* list.
+- Leave all TLS fields empty for plain `http://` or for HTTPS with a publicly trusted certificate; behaviour is then unchanged.
+- The uploaded certificates and key are stored in the integration's config entry, like other credentials in Home Assistant. They are redacted in diagnostics downloads and never logged.
+- TLS 1.2 or newer is required.
+
+To add TLS to an **existing** entry without losing any entities or history, open
+**Settings → Devices & Services → Docker Socket Proxy**, use the three-dot menu
+of the entry and choose **Reconfigure**. You can change the URL and upload,
+replace or remove (**Remove stored TLS certificates**) the certificate files.
+Leaving a file field empty keeps the stored file.
 
 ### Container Labels
 
@@ -409,6 +462,16 @@ Automatically receive push notifications on your phone if:
 - Check that the docker-socket-proxy container is running
 - Ensure firewall allows connections to the proxy port
 
+#### TLS errors
+
+Check the Home Assistant log for `custom_components.docker_socket_proxy`; it states the reason once per outage.
+
+- **"TLS certificate verification failed"**: the CA certificate does not match the CA that signed the proxy's certificate, or the host name in the URL is not listed in the certificate's Subject Alternative Names. Use the name or IP the certificate was issued for.
+- **"connection closed by the server ... requires a client certificate"**: the proxy wants mutual TLS but no (or an unaccepted) client certificate was sent. Upload a client certificate signed by the CA the proxy trusts.
+- **"The client certificate and private key do not belong together"**: re-upload the matching pair.
+- **"HTTP 403"**: TLS works, but the proxy denies that API endpoint. Enable it in the proxy (for Tecnativa: `CONTAINERS=1`, `VERSION=1`).
+- Expired certificates also fail verification; the certificate's expiry date is included in the diagnostics download.
+
 #### Missing containers
 
 - Containers must be running for auto-discovery
@@ -432,6 +495,14 @@ logger:
 ```
 
 ## Contributing
+
+Tests run with `pytest` (Python 3.13 or newer):
+
+```bash
+pip install -r requirements_test.txt
+pytest
+```
+
 
 Contributions are welcome! Please:
 
